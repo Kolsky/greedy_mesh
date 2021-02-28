@@ -1,4 +1,4 @@
-use std::ops::{Add, Sub};
+use std::ops::Sub;
 use std::cmp::Ordering;
 use std::convert::TryInto;
 
@@ -28,7 +28,7 @@ I: IntoIterator<Item = T> {
 
 // Voxel is set whenever its bit is set.
 // Data is stored as follows:
-// u16 for integer xs from 0 to 15,
+// u16 for integer xs from 0 to 15 (val & (1 << x) != 0),
 // index modulo 16 for integer ys from 0 to 15,
 // index divided by 16 for integer zs from 0 to 15.
 #[derive(Clone, Copy)]
@@ -57,15 +57,15 @@ impl Chunk3 {
     }
 
     pub fn yz_planes(self) -> [Chunk2; Chunk2::LEN] {
-        let mut old_data = self.data;
         let mut data = [0; Self::LEN];
+        let mut old_data = self.data;
         let bit_length = 8 * std::mem::size_of_val(&data[0]);
         for i in 0..Self::LEN {
-            let offset =  Chunk2::LEN * (i % Chunk2::LEN);
             for bit in 0..bit_length {
-                data[i] <<= 1;
-                data[i] |= old_data[bit + offset] & 1;
-                old_data[bit + offset] >>= 1;
+                let set = old_data[i] & 1;
+                old_data[i] >>= 1;
+                let index = i / Chunk2::LEN + Chunk2::LEN * bit;
+                data[index] |= set << (i % bit_length);
             }
         }
         Self { data }.xy_planes()
@@ -86,8 +86,9 @@ impl Chunk3 {
             })
             .as_array_of_chunk2_len()
         };
-        fn get_quads(quads: &mut Vec<Quad>, planes: &[Chunk2], min_quad_mapper: impl Fn(&MinQuad, u8) -> Quad + Copy) {
+        fn get_quads(quads: &mut Vec<Quad>, planes: &[Chunk2], min_quad_mapper: impl Fn(&MinQuad, u8) -> Quad) {
             let min_quads = get_min_quads(planes);
+            let min_quad_mapper = &min_quad_mapper;
             let iter = 
                 min_quads.iter()
                 .enumerate()
@@ -125,7 +126,7 @@ impl Chunk3 {
         get_quads(&mut quads, &yz_planes, |mq, inv_x| {
             Quad::new_yz(mq.dim_0 + mq.dim_0a, mq.dim_1, mq.dim_0, mq.dim_1 + mq.dim_1a, inv(inv_x))
         });
-        
+
         quads
     }
 }
@@ -276,17 +277,6 @@ pub struct Vec3<T> {
     pub z: T,
 }
 
-impl<T> Add for Vec3<T> where T: Add<Output = T> {
-    type Output = Self;
-
-    fn add(mut self, rhs: Self) -> Self::Output {
-        self.x = self.x + rhs.x;
-        self.y = self.y + rhs.y;
-        self.z = self.z + rhs.z;
-        self
-    }
-}
-
 impl<T> Vec3<T> {
     pub fn new(x: T, y: T, z: T) -> Self {
         Self { x, y, z }
@@ -394,5 +384,63 @@ mod tests {
             MinQuad { dim_0: 12, dim_1: 14, dim_0a: 1, dim_1a: 2 },
             MinQuad { dim_0: 13, dim_1: 15, dim_0a: 1, dim_1a: 1 },
         ].into_iter().collect());
+    }
+
+    #[test]
+    fn greedy_mesh_is_correct_for_volume() {
+        let (w0, w1, w2, w3, w4, w5, w6, w7, w8) = (0x0000, 0x0180, 0x03C0, 0x07E0, 0x0FF0, 0x1FF8, 0x3FFC, 0x7FFE, 0xFFFF);
+        let data: [u16; 256] = [
+            w0, w0, w0, w0, w0, w1, w2, w3,
+            w3, w2, w1, w0, w0, w0, w0, w0,
+
+            w0, w0, w0, w1, w3, w4, w4, w5,
+            w5, w4, w4, w3, w1, w0, w0, w0,
+
+            w0, w0, w2, w4, w5, w5, w6, w6,
+            w6, w6, w5, w5, w4, w2, w0, w0,
+
+            w0, w1, w4, w5, w6, w6, w6, w7,
+            w7, w6, w6, w6, w5, w4, w1, w0,
+
+            w0, w3, w5, w6, w6, w7, w7, w7,
+            w7, w7, w7, w6, w6, w5, w3, w0,
+
+            w1, w4, w5, w6, w7, w7, w7, w8,
+            w8, w7, w7, w7, w6, w5, w4, w1,
+
+            w2, w4, w6, w6, w7, w7, w8, w8,
+            w8, w8, w7, w7, w6, w6, w4, w2,
+
+            w3, w5, w6, w7, w7, w8, w8, w8,
+            w8, w8, w8, w7, w7, w6, w5, w3,
+
+            w3, w5, w6, w7, w7, w8, w8, w8,
+            w8, w8, w8, w7, w7, w6, w5, w3,
+
+            w2, w4, w6, w6, w7, w7, w8, w8,
+            w8, w8, w7, w7, w6, w6, w4, w2,
+
+            w1, w4, w5, w6, w7, w7, w7, w8,
+            w8, w7, w7, w7, w6, w5, w4, w1,
+
+            w0, w3, w5, w6, w6, w7, w7, w7,
+            w7, w7, w7, w6, w6, w5, w3, w0,
+
+            w0, w1, w4, w5, w6, w6, w6, w7,
+            w7, w6, w6, w6, w5, w4, w1, w0,
+
+            w0, w0, w2, w4, w5, w5, w6, w6,
+            w6, w6, w5, w5, w4, w2, w0, w0,
+
+            w0, w0, w0, w1, w3, w4, w4, w5,
+            w5, w4, w4, w3, w1, w0, w0, w0,
+
+            w0, w0, w0, w0, w0, w1, w2, w3,
+            w3, w2, w1, w0, w0, w0, w0, w0,
+        ];
+
+        let chunk3 = Chunk3 { data };
+        let quads = chunk3.greedy_mesh();
+        assert_eq!(quads.len(), 6 * 105);
     }
 }
