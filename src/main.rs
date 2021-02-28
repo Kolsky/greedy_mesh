@@ -71,6 +71,14 @@ impl Chunk3 {
         Self { data }.xy_planes()
     }
 
+    // Greedy mesh for voxel model is as simple as its 2d counterpart.
+    // As Chunk3 is just 16 (or any other number of) Chunk2's,
+    // any voxel model can be enclosed in a cuboid (as it's layed out at voxel grid and finite),
+    // and a cuboid has only six sides,
+    // it's enough to look at voxel model from each side, Chunk2 by Chunk2, gathering 2d meshes.
+    // We can exclude voxels from current Chunk2 if they have voxel above them (they aren't visible),
+    // hence the subtraction.
+    // Time complexity stays at O(voxel count), if 2d greedy mesh has optimal algorithm.
     pub fn greedy_mesh(self) -> Vec<Quad> {
         fn get_min_quads(planes: &[Chunk2]) -> [Vec<MinQuad>; 16] {
             let len = planes.len();
@@ -158,6 +166,15 @@ impl Sub for Chunk2 {
 
 impl Chunk2 {
     const LEN: usize = 16;
+    // There is much easier way to find such a mesh: just move left to right, row by row,
+    // if there is a pixel, then find how far you can extend your newly found quad
+    // to the right, then extend it downwards as much as you can and erase pixels underneath.
+    // The only remaining step is to add quad into collection and continue from where
+    // you have found the pixel. It has a bit of optimizations and not that slow at all, but
+    // still might be a bit slower in some cases due to worse cache locality
+    // and requires more additional memory if not done in place.
+    // The algorithm below might also become scalable in the future, though it's already
+    // complex enough to reason about.  
     pub fn greedy_mesh(self) -> Vec<MinQuad> {
         // Partially built quads. Rows contained in options allow to differentiate them.
         let pquads: &mut [Option<usize>; Self::LEN] = &mut [None; Self::LEN];
@@ -283,6 +300,15 @@ impl<T> Vec3<T> {
     }
 }
 
+// Quad is two triangles which share a common plane and a side.
+// Triangle can be drawn using 3 Vertex structs.
+// Vertex may have color or texture coordinates and always has position.
+// Probably the best solution at drawing quads or any other polygons is
+// to store their vertices contiguously in array, thus reducing draw calls.
+// Additionally, your renderer might not draw some triangles depending on
+// whether they've clockwise orientation from camera perspective.
+// Both tris built with greedy_mesh of Chunk3 are guaranteed to have
+// the same orientation and to stay opposite between two sides of plane.
 pub struct Quad {
     pub verts: [Vec3<u8>; 6],
 }
